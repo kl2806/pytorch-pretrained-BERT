@@ -2,8 +2,6 @@
 # Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
 # Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -608,6 +606,16 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
 
         if not version_2_with_negative:
             all_predictions[example.qas_id] = nbest_json[0]["text"]
+            '''
+            nbest_json_new = [best for best in nbest_json if " or " not in best["text"] and len(best["text"]) < 40]
+            if len(nbest_json_new) > 2:
+               nbest_json = nbest_json_new
+            best = nbest_json[0]
+            candidates_new = [pred for pred in nbest_json[1:] if best["text"].lower() not in pred["text"].lower() and pred["text"].lower() not in best["text"].lower()]
+            if len(candidates_new) > 0:
+                candidates = candidates_new
+            all_predictions[example.qas_id] = [nbest_json[0]["text"], candidates[0]["text"]]
+            '''
         else:
             # predict "" iff the null score - the score of best non-null > threshold
             score_diff = score_null - best_non_null_entry.start_logit - (
@@ -768,6 +776,10 @@ def main():
                         help="Bert pre-trained model selected in the list: bert-base-uncased, "
                         "bert-large-uncased, bert-base-cased, bert-large-cased, bert-base-multilingual-uncased, "
                         "bert-base-multilingual-cased, bert-base-chinese.")
+
+    parser.add_argument("--pretrained_weights", default=None, type=str, required=True,
+                        help="Add the S3 path of the pretrained bert weights here")
+
     parser.add_argument("--output_dir", default=None, type=str, required=True,
                         help="The output directory where the model checkpoints and predictions will be written.")
 
@@ -903,10 +915,17 @@ def main():
             len(train_examples) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
         if args.local_rank != -1:
             num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
+    else:
+        num_train_optimization_steps = 0
 
     # Prepare model
-    model = BertForQuestionAnswering.from_pretrained(args.bert_model,
+    if args.pretrained_weights:
+        model = BertForQuestionAnswering.from_pretrained(args.pretrained_weights)
+
+    else:
+        model = BertForQuestionAnswering.from_pretrained(args.bert_model,
                 cache_dir=os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed_{}'.format(args.local_rank)))
+
 
     if args.fp16:
         model.half()
@@ -1039,7 +1058,8 @@ def main():
         model = BertForQuestionAnswering.from_pretrained(args.output_dir)
         tokenizer = BertTokenizer.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
     else:
-        model = BertForQuestionAnswering.from_pretrained(args.bert_model)
+        # model = BertForQuestionAnswering.from_pretrained(args.bert_model)
+        model = BertForQuestionAnswering.from_pretrained(args.output_dir)
 
     model.to(device)
 
