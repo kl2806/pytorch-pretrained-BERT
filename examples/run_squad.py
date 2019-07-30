@@ -130,7 +130,9 @@ def read_squad_examples(input_file, is_training, version_2_with_negative):
     examples = []
     for entry in input_data:
         for paragraph in entry["paragraphs"]:
-            paragraph_text = paragraph["context"]
+            # paragraph_text = paragraph["context"]
+            paragraph_text = paragraph["background"] + " " + paragraph["situation"]
+            '''
             doc_tokens = []
             char_to_word_offset = []
             prev_is_whitespace = True
@@ -144,10 +146,26 @@ def read_squad_examples(input_file, is_training, version_2_with_negative):
                         doc_tokens[-1] += c
                     prev_is_whitespace = False
                 char_to_word_offset.append(len(doc_tokens) - 1)
+            '''
 
             for qa in paragraph["qas"]:
                 qas_id = qa["id"]
                 question_text = qa["question"]
+                paragraph_text += " " + question_text
+                doc_tokens = []
+                char_to_word_offset = []
+                prev_is_whitespace = True
+                for c in paragraph_text:
+                    if is_whitespace(c):
+                        prev_is_whitespace = True
+                    else:
+                        if prev_is_whitespace:
+                            doc_tokens.append(c)
+                        else:
+                            doc_tokens[-1] += c
+                        prev_is_whitespace = False
+                    char_to_word_offset.append(len(doc_tokens) - 1)
+
                 start_position = None
                 end_position = None
                 orig_answer_text = None
@@ -160,8 +178,15 @@ def read_squad_examples(input_file, is_training, version_2_with_negative):
                             "For training, each question should have exactly 1 answer.")
                     if not is_impossible:
                         answer = qa["answers"][0]
+                        # print(answer)
                         orig_answer_text = answer["text"]
-                        answer_offset = answer["answer_start"]
+                        # answer_offset = answer["answer_start"]
+                        if orig_answer_text in paragraph_text:
+                            answer_offset = paragraph_text.index(orig_answer_text)
+                        else:
+                            print('Unable to find')
+                            answer_offset = -1
+
                         answer_length = len(orig_answer_text)
                         start_position = char_to_word_offset[answer_offset]
                         end_position = char_to_word_offset[answer_offset + answer_length - 1]
@@ -777,7 +802,7 @@ def main():
                         "bert-large-uncased, bert-base-cased, bert-large-cased, bert-base-multilingual-uncased, "
                         "bert-base-multilingual-cased, bert-base-chinese.")
 
-    parser.add_argument("--pretrained_weights", default=None, type=str, required=True,
+    parser.add_argument("--pretrained_weights", default=None, type=str, required=False,
                         help="Add the S3 path of the pretrained bert weights here")
 
     parser.add_argument("--output_dir", default=None, type=str, required=True,
