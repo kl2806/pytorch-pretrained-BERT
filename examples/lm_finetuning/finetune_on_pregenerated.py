@@ -1,5 +1,6 @@
 from argparse import ArgumentParser
 from pathlib import Path
+import os
 import torch
 import logging
 import json
@@ -12,9 +13,10 @@ from torch.utils.data import DataLoader, Dataset, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
-from pytorch_pretrained_bert.modeling import BertForPreTraining
-from pytorch_pretrained_bert.tokenization import BertTokenizer
-from pytorch_pretrained_bert.optimization import BertAdam, WarmupLinearSchedule
+from pytorch_transformers import WEIGHTS_NAME, CONFIG_NAME
+from pytorch_transformers.modeling_bert import BertForPreTraining
+from pytorch_transformers.tokenization_bert import BertTokenizer
+from pytorch_transformers.optimization import AdamW, WarmupLinearSchedule
 
 InputFeatures = namedtuple("InputFeatures", "input_ids input_mask segment_ids lm_label_ids is_next")
 
@@ -153,11 +155,14 @@ def main():
                         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
                         "0 (default value): dynamic loss scaling.\n"
                         "Positive power of 2: static loss scaling value.\n")
-    parser.add_argument("--warmup_proportion",
-                        default=0.1,
+    parser.add_argument("--warmup_steps", 
+                        default=0, 
+                        type=int,
+                        help="Linear warmup over warmup_steps.")
+    parser.add_argument("--adam_epsilon", 
+                        default=1e-8, 
                         type=float,
-                        help="Proportion of training to perform linear learning rate warmup for. "
-                             "E.g., 0.1 = 10%% of training.")
+                        help="Epsilon for Adam optimizer.")
     parser.add_argument("--learning_rate",
                         default=3e-5,
                         type=float,
@@ -230,8 +235,9 @@ def main():
 
     # Prepare model
     model = BertForPreTraining.from_pretrained(args.bert_model)
-    if args.fp16:
-        model.half()
+    # We don't need to manually call model.half() following Apex's recommend
+    # if args.fp16:
+    #     model.half()
     model.to(device)
     if args.local_rank != -1:
         try:
@@ -252,29 +258,36 @@ def main():
         {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
     ]
 
+    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+    scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps,
+                                     t_total=num_train_optimization_steps)
+
     if args.fp16:
         try:
-            from apex.optimizers import FP16_Optimizer
-            from apex.optimizers import FusedAdam
+            # from apex.optimizers import FP16_Optimizer
+            # from apex.optimizers import FusedAdam
+            from apex import amp
         except ImportError:
             raise ImportError(
                 "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
 
-        optimizer = FusedAdam(optimizer_grouped_parameters,
-                              lr=args.learning_rate,
-                              bias_correction=False,
-                              max_grad_norm=1.0)
-        if args.loss_scale == 0:
-            optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
-        else:
-            optimizer = FP16_Optimizer(optimizer, static_loss_scale=args.loss_scale)
-        warmup_linear = WarmupLinearSchedule(warmup=args.warmup_proportion,
-                                             t_total=num_train_optimization_steps)
-    else:
-        optimizer = BertAdam(optimizer_grouped_parameters,
-                             lr=args.learning_rate,
-                             warmup=args.warmup_proportion,
-                             t_total=num_train_optimization_steps)
+        # This below line of code is the main upgrade of Apex Fp16 implementation. I chose opt_leve="01"
+        # because it's recommended for typical use by Apex. We can make it configured
+        model, optimizer = amp.initialize(model, optimizer, opt_level="O1")
+
+    # We don't need to use FP16_Optimizer wrapping over FusedAdam as well. Now Apex supports all Pytorch Optimizer
+
+    #     optimizer = FusedAdam(optimizer_grouped_parameters,
+    #                           lr=args.learning_rate,
+    #                           bias_correction=False,
+    #                           max_grad_norm=1.0)
+    #     if args.loss_scale == 0:
+    #         optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
+    #     else:
+    #         optimizer = FP16_Optimizer(optimizer, static_loss_scale=args.loss_scale)
+    # else:
+    #     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+    # scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=num_train_optimization_steps)
 
     global_step = 0
     logging.info("***** Running training *****")
@@ -296,13 +309,17 @@ def main():
             for step, batch in enumerate(train_dataloader):
                 batch = tuple(t.to(device) for t in batch)
                 input_ids, input_mask, segment_ids, lm_label_ids, is_next = batch
-                loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next)
+                outputs = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next)
+                loss = outputs[0]
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
                 if args.fp16:
-                    optimizer.backward(loss)
+                    # I depricate FP16_Optimizer's backward func and replace as Apex document
+                    # optimizer.backward(loss)
+                    with amp.scale_loss(loss, optimizer) as scaled_loss:
+                        scaled_loss.backward()
                 else:
                     loss.backward()
                 tr_loss += loss.item()
@@ -312,22 +329,17 @@ def main():
                 mean_loss = tr_loss * args.gradient_accumulation_steps / nb_tr_steps
                 pbar.set_postfix_str(f"Loss: {mean_loss:.5f}")
                 if (step + 1) % args.gradient_accumulation_steps == 0:
-                    if args.fp16:
-                        # modify learning rate with special warm up BERT uses
-                        # if args.fp16 is False, BertAdam is used that handles this automatically
-                        lr_this_step = args.learning_rate * warmup_linear.get_lr(global_step/num_train_optimization_steps,
-                                                                                 args.warmup_proportion)
-                        for param_group in optimizer.param_groups:
-                            param_group['lr'] = lr_this_step
                     optimizer.step()
+                    scheduler.step()  # Update learning rate schedule
                     optimizer.zero_grad()
                     global_step += 1
 
     # Save a trained model
-    logging.info("** ** * Saving fine-tuned model ** ** * ")
-    model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
-    output_model_file = args.output_dir / "pytorch_model.bin"
-    torch.save(model_to_save.state_dict(), str(output_model_file))
+    if args.local_rank == -1 or torch.distributed.get_rank() == 0:
+        logging.info("** ** * Saving fine-tuned model ** ** * ")
+        model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+        model_to_save.save_pretrained(args.output_dir)
+        tokenizer.save_pretrained(args.output_dir)
 
 
 if __name__ == '__main__':

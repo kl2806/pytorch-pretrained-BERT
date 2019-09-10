@@ -1,187 +1,112 @@
-from pytorch_pretrained_bert.tokenization import BertTokenizer
-from pytorch_pretrained_bert.modeling import (
-        BertModel,
-        BertForNextSentencePrediction,
-        BertForMaskedLM,
-        BertForMultipleChoice,
-        BertForPreTraining,
-        BertForQuestionAnswering,
-        BertForSequenceClassification,
-        BertForTokenClassification,
-        )
+from pytorch_transformers import (
+    AutoTokenizer, AutoConfig, AutoModel, AutoModelWithLMHead, AutoModelForSequenceClassification, AutoModelForQuestionAnswering
+)
+from pytorch_transformers.modeling_utils import add_start_docstrings
 
-dependencies = ['torch', 'tqdm', 'boto3', 'requests', 'regex']
+dependencies = ['torch', 'tqdm', 'boto3', 'requests', 'regex', 'sentencepiece', 'sacremoses']
 
-# A lot of models share the same param doc. Use a decorator
-# to save typing
-bert_docstring = """
-    Params:
-        pretrained_model_name_or_path: either:
-            - a str with the name of a pre-trained model to load
-                . `bert-base-uncased`
-                . `bert-large-uncased`
-                . `bert-base-cased`
-                . `bert-large-cased`
-                . `bert-base-multilingual-uncased`
-                . `bert-base-multilingual-cased`
-                . `bert-base-chinese`
-            - a path or url to a pretrained model archive containing:
-                . `bert_config.json` a configuration file for the model
-                . `pytorch_model.bin` a PyTorch dump of a BertForPreTraining
-                  instance
-            - a path or url to a pretrained model archive containing:
-                . `bert_config.json` a configuration file for the model
-                . `model.chkpt` a TensorFlow checkpoint
-        from_tf: should we load the weights from a locally saved TensorFlow
-                 checkpoint
-        cache_dir: an optional path to a folder in which the pre-trained models
-                   will be cached.
-        state_dict: an optional state dictionnary
-                    (collections.OrderedDict object) to use instead of Google
-                    pre-trained models
-        *inputs, **kwargs: additional input for the specific Bert class
-            (ex: num_labels for BertForSequenceClassification)
-"""
+@add_start_docstrings(AutoConfig.__doc__)
+def config(*args, **kwargs):
+    r""" 
+                # Using torch.hub !
+                import torch
+
+                config = torch.hub.load('huggingface/pytorch-transformers', 'config', 'bert-base-uncased')  # Download configuration from S3 and cache.
+                config = torch.hub.load('huggingface/pytorch-transformers', 'config', './test/bert_saved_model/')  # E.g. config (or model) was saved using `save_pretrained('./test/saved_model/')`
+                config = torch.hub.load('huggingface/pytorch-transformers', 'config', './test/bert_saved_model/my_configuration.json')
+                config = torch.hub.load('huggingface/pytorch-transformers', 'config', 'bert-base-uncased', output_attention=True, foo=False)
+                assert config.output_attention == True
+                config, unused_kwargs = torch.hub.load('huggingface/pytorch-transformers', 'config', 'bert-base-uncased', output_attention=True, foo=False, return_unused_kwargs=True)
+                assert config.output_attention == True
+                assert unused_kwargs == {'foo': False}
+
+            """
+
+    return AutoConfig.from_pretrained(*args, **kwargs)
 
 
-def _append_from_pretrained_docstring(docstr):
-    def docstring_decorator(fn):
-        fn.__doc__ = fn.__doc__ + docstr
-        return fn
-    return docstring_decorator
+@add_start_docstrings(AutoTokenizer.__doc__)
+def tokenizer(*args, **kwargs):
+    r""" 
+        # Using torch.hub !
+        import torch
 
+        tokenizer = torch.hub.load('huggingface/pytorch-transformers', 'tokenizer', 'bert-base-uncased')    # Download vocabulary from S3 and cache.
+        tokenizer = torch.hub.load('huggingface/pytorch-transformers', 'tokenizer', './test/bert_saved_model/')  # E.g. tokenizer was saved using `save_pretrained('./test/saved_model/')`
 
-def bertTokenizer(*args, **kwargs):
     """
-    Instantiate a BertTokenizer from a pre-trained/customized vocab file
-    Args:
-    pretrained_model_name_or_path: Path to pretrained model archive
-                                   or one of pre-trained vocab configs below.
-                                       * bert-base-uncased
-                                       * bert-large-uncased
-                                       * bert-base-cased
-                                       * bert-large-cased
-                                       * bert-base-multilingual-uncased
-                                       * bert-base-multilingual-cased
-                                       * bert-base-chinese
-    Keyword args:
-    cache_dir: an optional path to a specific directory to download and cache
-               the pre-trained model weights.
-               Default: None
-    do_lower_case: Whether to lower case the input.
-                   Only has an effect when do_wordpiece_only=False
-                   Default: True
-    do_basic_tokenize: Whether to do basic tokenization before wordpiece.
-                       Default: True
-    max_len: An artificial maximum length to truncate tokenized sequences to;
-             Effective maximum length is always the minimum of this
-             value (if specified) and the underlying BERT model's
-             sequence length.
-             Default: None
-    never_split: List of tokens which will never be split during tokenization.
-                 Only has an effect when do_wordpiece_only=False
-                 Default: ["[UNK]", "[SEP]", "[PAD]", "[CLS]", "[MASK]"]
 
-    Example:
-        >>> sentence = 'Hello, World!'
-        >>> tokenizer = torch.hub.load('ailzhang/pytorch-pretrained-BERT:hubconf', 'bertTokenizer', 'bert-base-cased', do_basic_tokenize=False, force_reload=False)
-        >>> toks = tokenizer.tokenize(sentence)
-        ['Hello', '##,', 'World', '##!']
-        >>> ids = tokenizer.convert_tokens_to_ids(toks)
-        [8667, 28136, 1291, 28125]
+    return AutoTokenizer.from_pretrained(*args, **kwargs)
+
+
+@add_start_docstrings(AutoModel.__doc__)
+def model(*args, **kwargs):
+    r"""
+            # Using torch.hub !
+            import torch
+
+            model = torch.hub.load('huggingface/pytorch-transformers', 'model', 'bert-base-uncased')    # Download model and configuration from S3 and cache.
+            model = torch.hub.load('huggingface/pytorch-transformers', 'model', './test/bert_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
+            model = torch.hub.load('huggingface/pytorch-transformers', 'model', 'bert-base-uncased', output_attention=True)  # Update configuration during loading
+            assert model.config.output_attention == True
+            # Loading from a TF checkpoint file instead of a PyTorch model (slower)
+            config = AutoConfig.from_json_file('./tf_model/bert_tf_model_config.json')
+            model = torch.hub.load('huggingface/pytorch-transformers', 'model', './tf_model/bert_tf_checkpoint.ckpt.index', from_tf=True, config=config)
+
+        """
+
+    return AutoModel.from_pretrained(*args, **kwargs)
+
+@add_start_docstrings(AutoModelWithLMHead.__doc__)
+def modelWithLMHead(*args, **kwargs):
+    r"""
+        # Using torch.hub !
+        import torch
+
+        model = torch.hub.load('huggingface/pytorch-transformers', 'modelWithLMHead', 'bert-base-uncased')    # Download model and configuration from S3 and cache.
+        model = torch.hub.load('huggingface/pytorch-transformers', 'modelWithLMHead', './test/bert_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
+        model = torch.hub.load('huggingface/pytorch-transformers', 'modelWithLMHead', 'bert-base-uncased', output_attention=True)  # Update configuration during loading
+        assert model.config.output_attention == True
+        # Loading from a TF checkpoint file instead of a PyTorch model (slower)
+        config = AutoConfig.from_json_file('./tf_model/bert_tf_model_config.json')
+        model = torch.hub.load('huggingface/pytorch-transformers', 'modelWithLMHead', './tf_model/bert_tf_checkpoint.ckpt.index', from_tf=True, config=config)
+
     """
-    tokenizer = BertTokenizer.from_pretrained(*args, **kwargs)
-    return tokenizer
+    return AutoModelWithLMHead.from_pretrained(*args, **kwargs)
 
 
-@_append_from_pretrained_docstring(bert_docstring)
-def bertModel(*args, **kwargs):
+@add_start_docstrings(AutoModelForSequenceClassification.__doc__)
+def modelForSequenceClassification(*args, **kwargs):
+    r"""
+            # Using torch.hub !
+            import torch
+
+            model = torch.hub.load('huggingface/pytorch-transformers', 'modelForSequenceClassification', 'bert-base-uncased')    # Download model and configuration from S3 and cache.
+            model = torch.hub.load('huggingface/pytorch-transformers', 'modelForSequenceClassification', './test/bert_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
+            model = torch.hub.load('huggingface/pytorch-transformers', 'modelForSequenceClassification', 'bert-base-uncased', output_attention=True)  # Update configuration during loading
+            assert model.config.output_attention == True
+            # Loading from a TF checkpoint file instead of a PyTorch model (slower)
+            config = AutoConfig.from_json_file('./tf_model/bert_tf_model_config.json')
+            model = torch.hub.load('huggingface/pytorch-transformers', 'modelForSequenceClassification', './tf_model/bert_tf_checkpoint.ckpt.index', from_tf=True, config=config)
+
+        """
+
+    return AutoModelForSequenceClassification.from_pretrained(*args, **kwargs)
+
+
+@add_start_docstrings(AutoModelForQuestionAnswering.__doc__)
+def modelForQuestionAnswering(*args, **kwargs):
+    r"""
+        # Using torch.hub !
+        import torch
+
+        model = torch.hub.load('huggingface/pytorch-transformers', 'modelForQuestionAnswering', 'bert-base-uncased')    # Download model and configuration from S3 and cache.
+        model = torch.hub.load('huggingface/pytorch-transformers', 'modelForQuestionAnswering', './test/bert_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
+        model = torch.hub.load('huggingface/pytorch-transformers', 'modelForQuestionAnswering', 'bert-base-uncased', output_attention=True)  # Update configuration during loading
+        assert model.config.output_attention == True
+        # Loading from a TF checkpoint file instead of a PyTorch model (slower)
+        config = AutoConfig.from_json_file('./tf_model/bert_tf_model_config.json')
+        model = torch.hub.load('huggingface/pytorch-transformers', 'modelForQuestionAnswering', './tf_model/bert_tf_checkpoint.ckpt.index', from_tf=True, config=config)
+
     """
-    BertModel is the basic BERT Transformer model with a layer of summed token,
-    position and sequence embeddings followed by a series of identical
-    self-attention blocks (12 for BERT-base, 24 for BERT-large).
-    """
-    model = BertModel.from_pretrained(*args, **kwargs)
-    return model
-
-
-@_append_from_pretrained_docstring(bert_docstring)
-def bertForNextSentencePrediction(*args, **kwargs):
-    """
-    BERT model with next sentence prediction head.
-    This module comprises the BERT model followed by the next sentence
-    classification head.
-    """
-    model = BertForNextSentencePrediction.from_pretrained(*args, **kwargs)
-    return model
-
-
-@_append_from_pretrained_docstring(bert_docstring)
-def bertForPreTraining(*args, **kwargs):
-    """
-    BERT model with pre-training heads.
-    This module comprises the BERT model followed by the two pre-training heads
-        - the masked language modeling head, and
-        - the next sentence classification head.
-    """
-    model = BertForPreTraining.from_pretrained(*args, **kwargs)
-    return model
-
-
-@_append_from_pretrained_docstring(bert_docstring)
-def bertForMaskedLM(*args, **kwargs):
-    """
-    BertForMaskedLM includes the BertModel Transformer followed by the
-    (possibly) pre-trained masked language modeling head.
-    """
-    model = BertForMaskedLM.from_pretrained(*args, **kwargs)
-    return model
-
-
-@_append_from_pretrained_docstring(bert_docstring)
-def bertForSequenceClassification(*args, **kwargs):
-    """
-    BertForSequenceClassification is a fine-tuning model that includes
-    BertModel and a sequence-level (sequence or pair of sequences) classifier
-    on top of the BertModel.
-
-    The sequence-level classifier is a linear layer that takes as input the
-    last hidden state of the first character in the input sequence
-    (see Figures 3a and 3b in the BERT paper).
-    """
-    model = BertForSequenceClassification.from_pretrained(*args, **kwargs)
-    return model
-
-
-@_append_from_pretrained_docstring(bert_docstring)
-def bertForMultipleChoice(*args, **kwargs):
-    """
-    BertForMultipleChoice is a fine-tuning model that includes BertModel and a
-    linear layer on top of the BertModel.
-    """
-    model = BertForMultipleChoice.from_pretrained(*args, **kwargs)
-    return model
-
-
-@_append_from_pretrained_docstring(bert_docstring)
-def bertForQuestionAnswering(*args, **kwargs):
-    """
-    BertForQuestionAnswering is a fine-tuning model that includes BertModel
-    with a token-level classifiers on top of the full sequence of last hidden
-    states.
-    """
-    model = BertForQuestionAnswering.from_pretrained(*args, **kwargs)
-    return model
-
-
-@_append_from_pretrained_docstring(bert_docstring)
-def bertForTokenClassification(*args, **kwargs):
-    """
-    BertForTokenClassification is a fine-tuning model that includes BertModel
-    and a token-level classifier on top of the BertModel.
-
-    The token-level classifier is a linear layer that takes as input the last
-    hidden state of the sequence.
-    """
-    model = BertForTokenClassification.from_pretrained(*args, **kwargs)
-    return model
+    return AutoModelForQuestionAnswering.from_pretrained(*args, **kwargs)
